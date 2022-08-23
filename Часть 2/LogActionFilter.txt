@@ -1,0 +1,153 @@
+using System.Diagnostics;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Net.Http.Headers;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using NLog;
+
+namespace WebApi.Filters
+{
+  public class LogActionFilter : IAsyncActionFilter, IExceptionFilter
+  {
+    private static readonly JsonSerializer JsonSerializer;
+    private readonly Logger _logger; //NLog's logger
+
+    static LogActionFilter()
+    {
+      JsonSerializer = JsonSerializer.CreateDefault();
+    }
+
+    public LogActionFilter(Logger logger)
+    {
+      _logger = logger;
+    }
+
+    public void OnException(ExceptionContext context)
+    {
+      _logger.Log(LogLevel.Error, context.Exception, context.Exception.Message);
+    }
+
+    public async Task OnActionExecutionAsync(ActionExecutingContext actionExecutingContext, ActionExecutionDelegate next)
+    {
+      var context = actionExecutingContext.HttpContext;
+      var token = context.Request.GetJwtSecurityToken();
+
+      var responseSw = Stopwatch.StartNew();
+      var resultExecutedContext = await next();
+      responseSw.Stop();
+
+      if (token == null)
+      {
+        return;
+      }
+
+      var auditStopwatch = Stopwatch.StartNew();
+      token.Payload.TryGetValue("custom:safeid", out var safeid);
+      token.Payload.TryGetValue("cognito:username", out var cname);
+
+      // log the request
+      var jobjectrequest = FormatRequestAudit(actionExecutingContext);
+
+      // log the response
+      var jobjectresponse = FormatResponseAudit(resultExecutedContext);
+
+      // log the audit
+      var jobjecteventrequest = new JObject
+      {
+        new JProperty("ev-request", jobjectrequest),
+      };
+
+      var jobjecteventresponse = new JObject
+      {
+        new JProperty("ev-response", jobjectresponse)
+      };
+
+      var jarray = new JArray(jobjecteventrequest, jobjecteventresponse);
+
+      var json = JsonConvert.SerializeObject(jarray, Formatting.None);
+
+      _logger.LogEvents(
+        LogLevel.Info,
+        $"Audit: {context.Request.Method} {context.Request.Path.ToString()} user {safeid}:{cname} api access; " +
+        $"Response time: {responseSw.Elapsed.ToString()}; " +
+        $"Audit time: {auditStopwatch.Elapsed.ToString()}",
+        json
+      );
+    }
+
+    private static JObject FormatRequestAudit(ActionExecutingContext actionExecutingContext)
+    {
+      var jsonrequest = new JObject();
+      var request = actionExecutingContext?.HttpContext?.Request;
+
+      if (request == null)
+      {
+        return jsonrequest;
+      }
+
+      jsonrequest.Add(new JProperty("method", request.Method));
+      jsonrequest.Add(new JProperty("path", request.Path.ToString()));
+
+      if (!string.IsNullOrEmpty(request.QueryString.Value))
+      {
+        jsonrequest.Add(new JProperty("querystring", request.QueryString.Value));
+      }
+
+      var headers = new JObject();
+      foreach (var (key, value) in request.Headers)
+      {
+        var headerValue = key == HeaderNames.Authorization ? "hidden" : value.ToString();
+        headers.Add(new JProperty(key, headerValue));
+      }
+
+      jsonrequest.Add(new JProperty("headers", headers));
+
+      jsonrequest.Add(
+        new JProperty("body", JToken.FromObject(actionExecutingContext.ActionArguments, JsonSerializer))
+      );
+
+      return jsonrequest;
+    }
+
+    private static JObject FormatResponseAudit(ActionExecutedContext actionExecutedContext)
+    {
+      var jsonresponse = new JObject();
+      var response = actionExecutedContext.HttpContext.Response;
+
+      if (response == null)
+      {
+        return jsonresponse;
+      }
+
+      jsonresponse.Add(new JProperty("resultcode", response.StatusCode));
+      var headers = new JObject();
+
+      foreach (var header in response.Headers)
+      {
+        headers.Add(new JProperty(header.Key, header.Value.ToString()));
+      }
+
+      jsonresponse.Add(new JProperty("headers", headers));
+
+      var path = actionExecutedContext.HttpContext.Request.Path.ToString();
+      var shouldAudit = !path.Contains("/list") &&
+                        !path.Contains("/usn");
+
+      if (shouldAudit)
+      {
+        if (actionExecutedContext.Result is ObjectResult objectResult)
+        {
+          jsonresponse.Add(new JProperty("body", JToken.FromObject(objectResult.Value, JsonSerializer)));
+        }
+      }
+      else
+      {
+        jsonresponse.Add(new JProperty("body", "result not audited"));
+      }
+
+      return jsonresponse;
+    }
+  }
+}
