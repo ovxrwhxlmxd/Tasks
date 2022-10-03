@@ -1,8 +1,15 @@
 {
   "version": 2,
-  "dgSpecHash": "q1ZFvzicvRMf2ymnHGm1LioWfxdaZdeIurt4FZmCok3a54MGPA9gNbFpkakVNhdptfRcix6P8Y45DbayIE+k4g==",
+  "dgSpecHash": "5ZR01vmo+lGo27eKXpTHulzbcVYGqyE+jECJOxPTWQhrJjvO+E3LaS9ZrQClgHBh5x8vKq2gVYQEatKCfKM4wA==",
   "success": true,
   "projectFilePath": "D:\\Denis\\Projects\\Tasks\\Tasks\\Tasks.csproj",
   "expectedPackageFiles": [],
-  "logs": []
+  "logs": [
+    {
+      "code": "NU1803",
+      "level": "Warning",
+      "warningLevel": 1,
+      "message": "You are running the 'restore' operation with an 'HTTP' source, 'http://10.129.0.26:5555/v3/index.json'. Non-HTTPS access will be removed in a future version. Consider migrating to an 'HTTPS' source."
+    }
+  ]
 }
